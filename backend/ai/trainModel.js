@@ -1,55 +1,60 @@
-const fs = require("fs");
-const csv = require("csv-parser");
-const { getEmbedding } = require("./embedding");
-const tf = require("@tensorflow/tfjs-node");
+const tf = require("@tensorflow/tfjs"); // Use browser-compatible TensorFlow.js
+const use = require("@tensorflow-models/universal-sentence-encoder");
 
-const resumes = [];
-const jobDescriptions = [];
-const labels = [];
+// Function to get text embeddings
+async function getEmbedding(text) {
+  const model = await use.load();
+  const embeddings = await model.embed([text]);
+  return embeddings.arraySync()[0]; // Convert tensor to an array
+}
 
-// Load Job Descriptions & Labels
-function loadCSV(filePath) {
+// Load Dataset (Simulated Fetch for Local File)
+async function loadCSV(filePath) {
+  const fs = require("fs");
+  const csv = require("csv-parser");
+
   return new Promise((resolve, reject) => {
+    const jobDescriptions = [];
+    const labels = [];
+
     fs.createReadStream(filePath)
       .pipe(csv())
       .on("data", (row) => {
         if (row.job_description && row.match_score) {
           jobDescriptions.push(row.job_description);
-          labels.push(parseFloat(row.match_score) / 100); // Normalize 0-1
+          labels.push(parseFloat(row.match_score) / 100); // Normalize match score
         }
       })
-      .on("end", resolve)
+      .on("end", () => resolve({ jobDescriptions, labels }))
       .on("error", reject);
   });
 }
 
-// Load Resume Texts
-function loadResumes() {
-  const data = JSON.parse(fs.readFileSync("datasets/resumes.json", "utf-8"));
-  data.forEach((resume) => resumes.push(resume.text));
-}
-
-// Load Everything
+// Prepare Data
 async function prepareData() {
-  await loadCSV("datasets/train.csv");
-  loadResumes();
+  const { jobDescriptions, labels } = await loadCSV("datasets/train.csv");
+
+  // Sample resumes (replace with real data)
+  const resumes = [
+    "Software engineer with experience in JavaScript and AI.",
+    "Data scientist skilled in machine learning and NLP.",
+  ];
 
   const resumeEmbeddings = await Promise.all(resumes.map(getEmbedding));
   const jobEmbeddings = await Promise.all(jobDescriptions.map(getEmbedding));
 
   // Combine resume & job description embeddings as input
-  const combinedInputs = resumeEmbeddings.map((resumeVec, i) => 
-    [...resumeVec, ...jobEmbeddings[i]] // Concatenate embeddings
+  const combinedInputs = resumeEmbeddings.map((resumeVec, i) =>
+    [...resumeVec, ...jobEmbeddings[i]]
   );
 
   return {
-    inputs: tf.tensor2d(combinedInputs), // Input is now a combination of both
+    inputs: tf.tensor2d(combinedInputs),
     targets: tf.tensor2d(labels.map((score) => [score])),
   };
 }
 
-
-
+// Train Model
 async function trainModel() {
   const { inputs, targets } = await prepareData();
 
@@ -64,8 +69,9 @@ async function trainModel() {
   await model.fit(inputs, targets, { epochs: 15 });
   console.log("Training complete!");
 
-  await model.save("file://./model");
+  // Save model (IndexedDB for browser, LocalStorage for Node.js workaround)
+  await model.save("localstorage://resume-model");
 }
 
-
+// Run Training
 trainModel();
